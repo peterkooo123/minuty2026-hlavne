@@ -11,9 +11,18 @@ st.set_page_config(page_title="Minúty 2026", layout="centered")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- POMOCNÉ FUNKCIE ---
-def load_names():
-    # Pre jednoduchosť zoznam mien, môžeš si doplniť načítanie zo súboru ako predtým
-    return sorted(["Jozef", "Michal", "Adam", "Ester", "Matti", "Lívia Bač."])
+def load_names_from_file():
+    subor_cesta = "Zoznam_mien.txt"
+    zakladne_mena = ["Jozef", "Michal"]
+    if os.path.exists(subor_cesta):
+        try:
+            with open(subor_cesta, "r", encoding="utf-8") as f:
+                mena_zo_suboru = [line.strip() for line in f if line.strip()]
+            if mena_zo_suboru:
+                return sorted(list(set(mena_zo_suboru)))
+        except:
+            pass
+    return sorted(zakladne_mena)
 
 def load_data():
     try:

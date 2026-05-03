@@ -48,18 +48,20 @@ def process_dataframe(df):
     if df.empty: return df
     
     df = df.copy()
-    df['Hodnota'] = df['Hodnota'].astype(str).str.zfill(3)
+    # Zabezpečíme, aby Hodnota bola číselná pre výpočty
+    df['Hodnota_int'] = pd.to_numeric(df['Hodnota'], errors='coerce').fillna(0).astype(int)
     
     def prep_sort(group):
-        vals = group['Hodnota'].astype(int)
+        vals = group['Hodnota_int']
         has_high = (vals >= 900).any()
         has_low = (vals <= 100).any()
         if has_high and has_low:
-            group['SortValue'] = group['Hodnota'].apply(lambda x: int(x) + 1000 if int(x) < 500 else int(x))
+            group['SortValue'] = group['Hodnota_int'].apply(lambda x: x + 1000 if x < 500 else x)
         else:
-            group['SortValue'] = vals
+            group['SortValue'] = group['Hodnota_int']
         return group
 
+    # 1. Rozdelenie na dni a pridanie SortValue
     processed_days = []
     unique_dates = sorted(df['Date'].unique())
     for d in unique_dates:
@@ -69,22 +71,26 @@ def process_dataframe(df):
     
     full_df = pd.concat(processed_days)
     
-    # 1. Radenie pre výpočet minút
-    full_df = full_df.sort_values(['Date', 'SortValue'])
+    # 2. Zoradenie od NAJSTARŠIEHO po NAJNOVŠIE (aby výpočet minút sedel)
+    full_df = full_df.sort_values(['Date', 'SortValue'], ascending=[True, True])
     
-    vals = full_df['Hodnota'].astype(int).tolist()
+    # 3. Výpočet minút (rozdiel oproti predchádzajúcemu riadku)
+    vals = full_df['Hodnota_int'].tolist()
     minutes = []
     prev_val = None
     for v in vals:
-        if prev_val is None: minutes.append(0)
+        if prev_val is None:
+            minutes.append(0)
         else:
             diff = v - prev_val
-            if diff < -500: diff += 1000
+            if diff < -500: diff += 1000 # Ošetrenie prechodu cez 1000
             minutes.append(diff)
         prev_val = v
+    
     full_df['Minúty'] = minutes
     
-    # 2. Radenie pre zobrazenie (NAJNOVŠIE HORE - podľa teba)
+    # 4. FINÁLNE OTOČENIE: Najnovšie záznamy dňa chceme vidieť NA VRCHU
+    # Zoradíme podľa Dátumu (nový hore) a SortValue (vysoká hodnota/pretočená hore)
     return full_df.sort_values(['Date', 'SortValue'], ascending=[False, False])
 
 # --- PROGRAM ---

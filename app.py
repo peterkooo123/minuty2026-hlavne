@@ -1,46 +1,64 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-import os
 import uuid
+import s3fs  # Potrebné pre prácu s S3
 
 # --- NASTAVENIA STRÁNKY ---
 st.set_page_config(page_title="Minúty 2026", layout="centered")
 
-# --- SÚBORY ---
-NAMES_FILE = "Zoznam_mien.txt"
-DATA_FILE = "data.csv"
+# --- NASTAVENIE S3 PREPOJENIA ---
+fs = s3fs.S3FileSystem(
+    key=st.secrets["s3"]["access_key_id"],
+    secret=st.secrets["s3"]["secret_access_key"]
+)
+BUCKET = st.secrets["s3"]["bucket_name"]
+NAMES_FILE = f"{BUCKET}/Zoznam_mien.txt"
+DATA_FILE = f"{BUCKET}/data.csv"
 
-# Inicializácia súborov
-if not os.path.exists(NAMES_FILE):
-    with open(NAMES_FILE, "w", encoding="utf-8") as f:
+# Inicializácia súborov na S3
+if not fs.exists(NAMES_FILE):
+    with fs.open(NAMES_FILE, "w", encoding="utf-8") as f:
         f.write("Jozef\nMichal\n")
 
-if not os.path.exists(DATA_FILE):
+if not fs.exists(DATA_FILE):
     df_init = pd.DataFrame(columns=["ID", "Date", "Meno", "Hodnota", "Tankovanie"])
-    df_init.to_csv(DATA_FILE, index=False)
+    with fs.open(DATA_FILE, "w") as f:
+        df_init.to_csv(f, index=False)
 
-# --- POMOCNÉ FUNKCIE ---
+# --- POMOCNÉ FUNKCIE (Upravené pre S3) ---
 def load_names():
-    if not os.path.exists(NAMES_FILE): return ["Jozef", "Michal"]
-    with open(NAMES_FILE, "r", encoding="utf-8") as f:
-        return sorted([line.strip() for line in f.readlines() if line.strip()])
+    try:
+        if not fs.exists(NAMES_FILE): return ["Jozef", "Michal"]
+        with fs.open(NAMES_FILE, "r", encoding="utf-8") as f:
+            return sorted([line.strip() for line in f.readlines() if line.strip()])
+    except:
+        return ["Jozef", "Michal"]
 
 def save_name(new_name):
-    with open(NAMES_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{new_name}\n")
+    names = load_names()
+    if new_name not in names:
+        names.append(new_name)
+        with fs.open(NAMES_FILE, "w", encoding="utf-8") as f:
+            for name in names:
+                f.write(f"{name}\n")
 
 def load_data():
-    if not os.path.exists(DATA_FILE):
+    try:
+        if not fs.exists(DATA_FILE):
+            return pd.DataFrame(columns=["ID", "Date", "Meno", "Hodnota", "Tankovanie"])
+        with fs.open(DATA_FILE, "rb") as f:
+            df = pd.read_csv(f)
+        df['Date'] = pd.to_datetime(df['Date']).dt.date
+        df['Hodnota'] = df['Hodnota'].astype(str).str.zfill(3)
+        return df
+    except:
         return pd.DataFrame(columns=["ID", "Date", "Meno", "Hodnota", "Tankovanie"])
-    df = pd.read_csv(DATA_FILE)
-    df['Date'] = pd.to_datetime(df['Date']).dt.date
-    df['Hodnota'] = df['Hodnota'].astype(str).str.zfill(3)
-    return df
 
 def save_data(df):
     df['Hodnota'] = df['Hodnota'].astype(str).str.zfill(3)
-    df.to_csv(DATA_FILE, index=False)
+    with fs.open(DATA_FILE, "w", encoding="utf-8") as f:
+        df.to_csv(f, index=False)
 
 # --- VÝPOČET MINÚT ---
 def process_dataframe(df):
@@ -140,7 +158,6 @@ if not full_df_with_minutes.empty:
 
 st.sidebar.divider()
 
-# Upravený Import pre Android (povolené aj txt)
 uploaded_file = st.sidebar.file_uploader("Nahrať záložné CSV", type=["csv", "txt"])
 if uploaded_file is not None:
     if st.sidebar.button("⚠️ Obnoviť dáta zo súboru"):
@@ -226,7 +243,6 @@ if not full_df_with_minutes.empty:
     finalny_suhrn['Tento mesiac (min)'] = finalny_suhrn['Tento mesiac (min)'].astype(int)
     finalny_suhrn = finalny_suhrn.sort_values(by='Celkovo (min)', ascending=False)
 
-    # PRIDANIE RIADKU SPOLU
     sum_celkovo = finalny_suhrn['Celkovo (min)'].sum()
     sum_mesiac = finalny_suhrn['Tento mesiac (min)'].sum()
     
@@ -256,7 +272,6 @@ if not full_df_with_minutes.empty and vybrane_názvy:
         custom_sum.columns = ['Meno', 'Suma minút']
         custom_sum = custom_sum.sort_values(by='Suma minút', ascending=False)
         
-        # PRIDANIE RIADKU SPOLU
         suma_filtrovana = custom_sum['Suma minút'].sum()
         riadok_spolu_custom = pd.DataFrame({
             'Meno': ['--- SPOLU ---'], 
@@ -264,7 +279,6 @@ if not full_df_with_minutes.empty and vybrane_názvy:
         })
         
         custom_sum_so_spolu = pd.concat([custom_sum, riadok_spolu_custom], ignore_index=True)
-        
         st.subheader(f"Štatistika za: {', '.join(vybrane_názvy)}")
         st.dataframe(custom_sum_so_spolu, hide_index=True, use_container_width=True)
     else:
